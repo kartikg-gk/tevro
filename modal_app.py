@@ -60,6 +60,18 @@ def evaluate(checkpoint: str, max_questions: int = 5000, out: str = ""):
     return result.stdout
 
 
+@app.function(gpu=GPU, image=image, timeout=30 * 60,  # short fine-tunes: 30 min hard cap
+              volumes={f"{APP_DIR}/runs": runs, "/cache/huggingface": hf_cache})
+def finetune(config: str, resume: str, name: str = ""):
+    subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv"], check=False)
+    cmd = ["python", "train.py", config, "--resume", resume] + (["--name", name] if name else [])
+    try:
+        subprocess.run(cmd, cwd=APP_DIR, check=True)
+    finally:
+        runs.commit()
+        hf_cache.commit()
+
+
 @app.local_entrypoint()
 def main(config: str, name: str = "", resume: str = ""):
     train.remote(config, name, resume)
