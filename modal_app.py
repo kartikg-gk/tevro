@@ -72,6 +72,16 @@ def finetune(config: str, resume: str, name: str = ""):
         hf_cache.commit()
 
 
+@app.function(gpu="T4", image=image, timeout=15 * 60,  # 231-question benchmark: cheap GPU, 15 min cap
+              volumes={f"{APP_DIR}/runs": runs, "/cache/huggingface": hf_cache})
+def jevbench(checkpoint: str, data_dir: str = "runs/_benchmarks/jevbench-public", out: str = ""):
+    cmd = ["python", "jevbench_eval.py", checkpoint, data_dir] + (["--out", out] if out else [])
+    result = subprocess.run(cmd, cwd=APP_DIR, check=True, capture_output=True, text=True)
+    print(result.stdout)
+    runs.commit()
+    return result.stdout
+
+
 @app.local_entrypoint()
 def main(config: str, name: str = "", resume: str = ""):
     train.remote(config, name, resume)
