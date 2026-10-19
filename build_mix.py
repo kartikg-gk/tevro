@@ -17,6 +17,7 @@ from reasoning_data import generate
 
 MAIN = "kartikg1/tevro-decision-v1"
 SIZES = {"rules": 8000, "mnli": 1000, "boolq": 1000, "replay": 10000}
+TOTAL = 20000
 NLI_OPTIONS = {
     "entailment": "The text shows the statement is true",
     "neutral": "The text neither confirms nor rules out the statement",
@@ -58,10 +59,16 @@ def replay_rows(n, seed):
 
 
 def main():
+    """python build_mix.py out_dir [llm_items.jsonl]: with LLM items, rules drop to 4,000 and replay fills to 20K."""
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
     seed = 0
-    rows = (generate(SIZES["rules"], seed) + mnli_rows(SIZES["mnli"], seed) + boolq_rows(SIZES["boolq"], seed)
+    llm = []
+    if len(sys.argv) > 2:
+        llm = [json.loads(line) for line in open(sys.argv[2], encoding="utf-8")]
+        SIZES.update(rules=4000, mnli=500, boolq=500)
+        SIZES["replay"] = TOTAL - len(llm) - SIZES["rules"] - SIZES["mnli"] - SIZES["boolq"]
+    rows = (llm + generate(SIZES["rules"], seed) + mnli_rows(SIZES["mnli"], seed) + boolq_rows(SIZES["boolq"], seed)
             + replay_rows(SIZES["replay"], seed))
     random.Random(seed).shuffle(rows)
     schema = pa.schema([("state", pa.large_string()), ("questions_json", pa.large_string()), ("domain", pa.string()),
@@ -69,7 +76,7 @@ def main():
     pq.write_table(pa.Table.from_pylist(rows, schema=schema), out / "train.parquet")
     test = pq.read_table(hf_hub_download(MAIN, "data/test.parquet", repo_type="dataset"))
     pq.write_table(test, out / "test.parquet")
-    print(f"train rows {len(rows)} ({SIZES}), test rows {test.num_rows} -> {out}")
+    print(f"train rows {len(rows)} (llm {len(llm)}, {SIZES}), test rows {test.num_rows} -> {out}")
 
 
 if __name__ == "__main__":
