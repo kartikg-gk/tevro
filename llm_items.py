@@ -86,7 +86,7 @@ def chat(content, schema, system):
             "max_tokens": 4000,
             # The same model is served by many providers at up to 15x the cheapest price: pin to the cheapest
             # ones, cap the price per million tokens, keep reasoning short, and ask for the real charged cost
-            "provider": {"sort": "price", "max_price": {"prompt": 0.12, "completion": 0.2}},
+            "provider": {"sort": "price", "max_price": {"prompt": 0.05, "completion": 0.09}},  # cheapest endpoint only
             "reasoning": {"effort": "low"},
             "usage": {"include": True}}
     req = urllib.request.Request(URL, data=json.dumps(body).encode(), headers={
@@ -132,6 +132,9 @@ def valid(item, qtype):
     return 3 <= len(item.options) <= 5 and len(set(item.options)) == len(item.options)
 
 
+BUDGET = float(os.environ.get("ITEM_BUDGET_USD", "0.9"))  # stop starting new items past this real spend
+
+
 def run(n, out, workers=16):
     tokens, lock = {"in": 0, "out": 0, "errors": 0, "cost": 0.0}, Lock()
 
@@ -143,6 +146,8 @@ def run(n, out, workers=16):
 
     def one(spec):
         _, family, topic, qtype, seed, target = spec
+        if tokens["cost"] >= BUDGET:
+            return None
         try:
             item, u = chat(gen_prompt(family, topic, qtype, seed, target), Item, SYSTEM)
             count(u)
