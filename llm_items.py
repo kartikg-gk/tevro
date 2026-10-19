@@ -1,25 +1,24 @@
-"""Generate hard decision questions with Claude Haiku 5.5, then keep only items a second, blind pass answers the same way.
+"""Generate hard decision questions with an LLM through OpenRouter, then keep only items a second, blind pass answers
+the same way. Reads the key from OPENROUTER_API_KEY.
 
-    python llm_items.py pilot 50 out.jsonl        # direct calls, prints token usage and cost
-    python llm_items.py batch 5000 out_dir        # Message Batches API (half price), submit + poll + collect
+    python llm_items.py 50 out.jsonl          # pilot: prints token usage and cost
+    python llm_items.py 5000 out.jsonl        # full run
 
-Each kept item becomes one row in the dataset schema (state, questions_json, domain, question_types, question_count).
+Every line of the output is {"row": <dataset row>, "agree": bool, "family", "rationale"}; train only on agree=true.
 """
 import json
+import os
 import random
 import sys
-import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import Literal
+from threading import Lock
 
-import anthropic
-from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
-from anthropic.types.messages.batch_create_params import Request
 from pydantic import BaseModel
 
-MODEL = "claude-haiku-5-5"
-PRICE_IN, PRICE_OUT = 0.10 / 1e6, 0.50 / 1e6  # USD per token (prompts under 100K); batches are half price
+MODEL = os.environ.get("ITEM_MODEL", "deepseek/deepseek-v4.1-flash")
+PRICE_IN, PRICE_OUT = 0.044 / 1e6, 0.08 / 1e6  # USD per token for deepseek-v4.1-flash on OpenRouter
+URL = "https://openrouter.ai/api/v1/chat/completions"
 
 FAMILIES = {
     "long_policy": "a long written policy, contract or regulation with several clauses, definitions and exceptions; "
@@ -56,21 +55,42 @@ class Blind(BaseModel):
 SYSTEM = ("You write evaluation items for a small decision model. Each item has a state (the facts), a question, "
           "and options with exactly one correct answer that a careful expert would agree on. The state must be "
           "self-contained: no outside knowledge. Do not let the wording, order or length of the options reveal the "
-          "answer. Vary names, numbers and phrasing.")
+          "answer. Vary names, numbers and phrasing. Reply with JSON only.")
 
 
-def gen_prompt(family, topic, qtype, seed):
+def gen_prompt(family, topic, qtype, seed, target=None):
+    goal = ""
+    if qtype == "noul":
+        goal = f"The correct answer must be {['No', 'Yes'][target]}. "
+    elif qtype == "score":
+        goal = f"The correct answer must be level {target} (0 = lowest). "
     return (f"Write one item.\nTopic: {topic}\nDifficulty driver: {FAMILIES[family]}\n"
             f"Question type: {TYPES[qtype]}\n"
             f"The state should be 120-350 words. Variation seed: {seed}.\n"
             + ("Options must be exactly [\"No\", \"Yes\"]. " if qtype == "noul" else "")
             + ("Options must be 4 ordered levels from lowest to highest. " if qtype == "score" else "")
-            + "Put the correct option at any position. Give a one-paragraph rationale.")
+            + goal + "Give a one-paragraph rationale.\n"
+            + 'JSON fields: state, instructions, options (list), answer_index (int), rationale.')
 
 
 def blind_prompt(item):
     opts = "\n".join(f"{i}. {o}" for i, o in enumerate(item.options))
-    return f"State:\n{item.state}\n\nQuestion: {item.instructions}\nOptions:\n{opts}\n\nAnswer with the index of the correct option."
+    return (f"State:\n{item.state}\n\nQuestion: {item.instructions}\nOptions:\n{opts}\n\n"
+            'Reply with JSON {"answer_index": <index of the correct option>}.')
+
+
+def chat(content, schema, system):
+    body = {"model": MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": schema.__name__, "strict": True,
+                                                                        "schema": schema.model_json_schema()}},
+            "max_tokens": 4000}
+    req = urllib.request.Request(URL, data=json.dumps(body).encode(), headers={
+        "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        d = json.loads(r.read())
+    text = d["choices"][0]["message"]["content"]
+    text = text[text.find("{"):text.rfind("}") + 1]
+    return schema.model_validate_json(text), d.get("usage", {})
 
 
 def specs(n, seed=0):
@@ -79,13 +99,9 @@ def specs(n, seed=0):
     for i in range(n):
         family = rng.choice(list(FAMILIES))
         qtype = rng.choices(["choice", "noul", "score"], weights=[0.55, 0.35, 0.10])[0]
-        out.append((f"item-{i}", family, rng.choice(TOPICS), qtype, rng.randint(1, 10**6)))
+        target = rng.randint(0, 1) if qtype == "noul" else rng.randint(0, 3) if qtype == "score" else None
+        out.append((f"item-{i}", family, rng.choice(TOPICS), qtype, rng.randint(1, 10**6), target))
     return out
-
-
-def params(content, schema, system=SYSTEM):
-    return dict(model=MODEL, max_tokens=4000, system=system, messages=[{"role": "user", "content": content}],
-                output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema.model_json_schema()}})
 
 
 def to_row(item, family, qtype):
@@ -111,86 +127,45 @@ def valid(item, qtype):
     return 3 <= len(item.options) <= 5 and len(set(item.options)) == len(item.options)
 
 
-def pilot(n, out):
-    client = anthropic.Anthropic()
-    tokens = {"in": 0, "out": 0}
+def run(n, out, workers=16):
+    tokens, lock = {"in": 0, "out": 0, "errors": 0}, Lock()
+
+    def count(usage):
+        with lock:
+            tokens["in"] += usage.get("prompt_tokens", 0)
+            tokens["out"] += usage.get("completion_tokens", 0)
 
     def one(spec):
-        cid, family, topic, qtype, seed = spec
-        r = client.messages.create(**params(gen_prompt(family, topic, qtype, seed), Item))
-        tokens["in"] += r.usage.input_tokens
-        tokens["out"] += r.usage.output_tokens
-        item = Item.model_validate_json(next(b.text for b in r.content if b.type == "text"))
-        if not valid(item, qtype):
+        _, family, topic, qtype, seed, target = spec
+        try:
+            item, u = chat(gen_prompt(family, topic, qtype, seed, target), Item, SYSTEM)
+            count(u)
+            if not valid(item, qtype) or (target is not None and item.answer_index != target):
+                return None
+            if qtype == "choice":  # choice options have no order: shuffle so the gold position is uniform
+                order = list(range(len(item.options)))
+                random.Random(seed).shuffle(order)
+                item = item.model_copy(update={"options": [item.options[i] for i in order],
+                                               "answer_index": order.index(item.answer_index)})
+            blind, u = chat(blind_prompt(item), Blind, "Answer carefully. Reply with JSON only.")
+            count(u)
+        except Exception:
+            with lock:
+                tokens["errors"] += 1
             return None
-        b = client.messages.create(**params(blind_prompt(item), Blind, system="Answer carefully."))
-        tokens["in"] += b.usage.input_tokens
-        tokens["out"] += b.usage.output_tokens
-        blind = Blind.model_validate_json(next(x.text for x in b.content if x.type == "text"))
         return {"row": to_row(item, family, qtype), "agree": blind.answer_index == item.answer_index,
-                "rationale": item.rationale, "family": family}
+                "family": family, "rationale": item.rationale}
 
-    with ThreadPoolExecutor(8) as pool:
+    with ThreadPoolExecutor(workers) as pool:
         results = [r for r in pool.map(one, specs(n)) if r is not None]
-    kept = [r for r in results if r["agree"]]
     with open(out, "w", encoding="utf-8") as f:
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    kept = sum(r["agree"] for r in results)
     cost = tokens["in"] * PRICE_IN + tokens["out"] * PRICE_OUT
-    print(f"generated {len(results)}/{n} valid, kept {len(kept)} after blind check")
-    print(f"tokens in {tokens['in']:,} out {tokens['out']:,}  cost ${cost:.3f}  "
-          f"(~${cost / max(1, len(kept)):.4f} per kept item at full price; batches are half)")
-
-
-def run_batch(client, requests):
-    batch = client.messages.batches.create(requests=requests)
-    while client.messages.batches.retrieve(batch.id).processing_status != "ended":
-        time.sleep(30)
-    return {r.custom_id: r for r in client.messages.batches.results(batch.id)}
-
-
-def batch(n, out_dir):
-    client = anthropic.Anthropic()
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    sp = {s[0]: s for s in specs(n)}
-    gen = run_batch(client, [Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
-        **params(gen_prompt(f, t, q, seed), Item))) for cid, f, t, q, seed in sp.values()])
-    items, usage = {}, [0, 0]
-    for cid, r in gen.items():
-        if r.result.type != "succeeded":
-            continue
-        m = r.result.message
-        usage[0] += m.usage.input_tokens
-        usage[1] += m.usage.output_tokens
-        try:
-            item = Item.model_validate_json(next(b.text for b in m.content if b.type == "text"))
-        except Exception:
-            continue
-        if valid(item, sp[cid][3]):
-            items[cid] = item
-    blind = run_batch(client, [Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
-        **params(blind_prompt(it), Blind, system="Answer carefully."))) for cid, it in items.items()])
-    rows = []
-    for cid, r in blind.items():
-        if r.result.type != "succeeded":
-            continue
-        m = r.result.message
-        usage[0] += m.usage.input_tokens
-        usage[1] += m.usage.output_tokens
-        try:
-            ans = Blind.model_validate_json(next(b.text for b in m.content if b.type == "text")).answer_index
-        except Exception:
-            continue
-        if ans == items[cid].answer_index:
-            rows.append(to_row(items[cid], sp[cid][1], sp[cid][3]))
-    with open(out / "llm_items.jsonl", "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    cost = (usage[0] * PRICE_IN + usage[1] * PRICE_OUT) / 2
-    print(f"valid {len(items)}/{n}, kept {len(rows)} after blind check, batch cost ~${cost:.2f}")
+    print(f"{MODEL}: valid {len(results)}/{n}, kept {kept} after blind check, errors {tokens['errors']}")
+    print(f"tokens in {tokens['in']:,} out {tokens['out']:,}  cost ${cost:.4f}  (${cost / max(1, kept):.5f} per kept item)")
 
 
 if __name__ == "__main__":
-    mode, n, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-    pilot(n, out) if mode == "pilot" else batch(n, out)
+    run(int(sys.argv[1]), sys.argv[2])
