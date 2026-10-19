@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Training runs (LoRA + head checkpoints, metrics)
+runs/
+
+# Local environments and data
+.env
+data/
+.DS_Store

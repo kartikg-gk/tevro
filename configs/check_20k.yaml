@@ -1,0 +1,48 @@
+# 20,000-question check on a 6 GB laptop GPU: bf16 frozen weights, micro-batch 2 x 32 = 64 questions per step.
+seed: 0
+
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  dtype: bfloat16           # frozen weights in bf16 to fit 6 GB
+
+data:
+  max_train_questions: 20000
+  max_test_questions: 1000
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  batch_size: 2
+  num_workers: 0             # Windows workers each load torch + CUDA; RAM runs out
+  use_answer_prompt: true   # "The answer is:" tokens see every option
+
+synthetic:
+  num_questions: 0
+
+calibration:
+  fraction: 0.0
+
+lora:
+  last_k_layers: 14
+  r: 8
+  alpha: 16
+  dropout: 0.0
+
+head:
+  type: posthead            # 2 bidirectional layers over every token, scorer per choice
+  num_layers: 2
+  dropout: 0.1
+
+optim:
+  epochs: 1
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 32
+  rps_weight: 0.0
+
+logging:
+  log_every: 5
+  eval_every: 100
+  save_every: 100

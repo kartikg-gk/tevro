@@ -1,0 +1,28 @@
+[project]
+name = "tevro"
+version = "0.1.0"
+description = "Bi-encoder decision model: scores choices for a state and question"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "datasets>=5.0.1",
+    "peft>=0.21.0",
+    "pyyaml>=6.0.3",
+    "safetensors>=0.6.0",
+    "torch>=2.14.0",
+    "transformers>=5.17.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+# Windows has no CUDA torch on PyPI; take it from the PyTorch CUDA 13.0 index (Linux keeps PyPI's CUDA build)
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
