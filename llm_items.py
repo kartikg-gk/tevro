@@ -83,7 +83,12 @@ def chat(content, schema, system):
     body = {"model": MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
             "response_format": {"type": "json_schema", "json_schema": {"name": schema.__name__, "strict": True,
                                                                         "schema": schema.model_json_schema()}},
-            "max_tokens": 4000}
+            "max_tokens": 4000,
+            # The same model is served by many providers at up to 15x the cheapest price: pin to the cheapest
+            # ones, cap the price per million tokens, keep reasoning short, and ask for the real charged cost
+            "provider": {"sort": "price", "max_price": {"prompt": 0.12, "completion": 0.2}},
+            "reasoning": {"effort": "low"},
+            "usage": {"include": True}}
     req = urllib.request.Request(URL, data=json.dumps(body).encode(), headers={
         "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=180) as r:
@@ -128,12 +133,13 @@ def valid(item, qtype):
 
 
 def run(n, out, workers=16):
-    tokens, lock = {"in": 0, "out": 0, "errors": 0}, Lock()
+    tokens, lock = {"in": 0, "out": 0, "errors": 0, "cost": 0.0}, Lock()
 
     def count(usage):
         with lock:
             tokens["in"] += usage.get("prompt_tokens", 0)
             tokens["out"] += usage.get("completion_tokens", 0)
+            tokens["cost"] += float(usage.get("cost") or 0)  # what OpenRouter actually charged
 
     def one(spec):
         _, family, topic, qtype, seed, target = spec
@@ -162,7 +168,7 @@ def run(n, out, workers=16):
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     kept = sum(r["agree"] for r in results)
-    cost = tokens["in"] * PRICE_IN + tokens["out"] * PRICE_OUT
+    cost = tokens["cost"]
     print(f"{MODEL}: valid {len(results)}/{n}, kept {kept} after blind check, errors {tokens['errors']}")
     print(f"tokens in {tokens['in']:,} out {tokens['out']:,}  cost ${cost:.4f}  (${cost / max(1, kept):.5f} per kept item)")
 
