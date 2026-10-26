@@ -71,8 +71,8 @@ On the held-out split, yes/no AUC is 0.953 and expected calibration error is 0.0
 ## Set up for training
 
 ```bash
-git clone https://github.com/kartikg-gk/nirny
-cd nirny
+git clone https://github.com/kartikg-gk/tevro
+cd tevro
 uv sync
 uv run pytest -q tests
 ```
