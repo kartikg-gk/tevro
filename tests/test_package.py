@@ -74,7 +74,7 @@ def test_yes_no_score_and_structured_state():
 
 
 def test_lazy_exports_and_cli_help(capsys):
-    assert tevro.__version__ == "0.1.1" and callable(tevro.load) and tevro.DEFAULT_MODEL == "kartikg1/tevro-decider"
+    assert tevro.__version__ == "0.1.2" and callable(tevro.load) and tevro.DEFAULT_MODEL == "kartikg1/tevro-decider"
     with pytest.raises(AttributeError):
         tevro.nope
     from tevro.cli import main

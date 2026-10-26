@@ -1,91 +1,82 @@
 # Tevro
 
-Tevro is a small decision model, and this repository holds its training code and a pip package for running it. It reads a state, a question and a fixed set of options, and returns one probability per option in a single forward pass. It handles three question types: multiple choice, yes/no, and ordinal scores.
+Run [**tevro-decider**](https://huggingface.co/kartikg1/tevro-decider), a small decision model. It reads a state (text or JSON) and typed questions about it, and returns a probability for every option in a single forward pass. It uses JEV's question and answer format, so a local server can stand in for the `/v1/systemone` API.
 
 ![Tevro architecture](https://raw.githubusercontent.com/kartikg-gk/tevro/main/arch.png)
 
-## Use the model
+- **Small.** The first 20 layers of Qwen3-0.6B with LoRA adapters and a 26M-parameter head. It runs on a laptop CPU or any GPU.
+- **Choice-order invariant.** Every option starts at the same position and is read in parallel, so reordering the options does not change the answer.
+- **Typed answers:** `choice` (a key and probabilities), `noul` (P(yes)) and `score` (an expected level and probabilities).
 
-The trained model is on Hugging Face: **[kartikg1/tevro-decider](https://huggingface.co/kartikg1/tevro-decider)**. It needs Python 3.12 and about 3 GB of free memory; a GPU is optional.
+## Install
 
 ```bash
-pip install tevro
-tevro predict request.json --device cpu
+pip install tevro            # library
+pip install "tevro[serve]"   # + local /v1/systemone server
 ```
 
-`tevro predict` reads one request from a JSON file (examples below) and prints the answer. The weights and the base model are downloaded on the first run. Use `--device cuda` on an NVIDIA GPU. From Python:
+The weights are downloaded from the Hugging Face Hub on first use. Loading needs about 3 GB of free memory; on a small machine add `--precision bf16` (or `precision="bf16"` in Python), which needs about half of that, runs slower on CPU and moves probabilities by under 0.01.
+
+## Python
 
 ```python
 import tevro
 
-model = tevro.load()                      # downloads kartikg1/tevro-decider on first use
-model.answer("Parcel A is on shelf B2. Parcel B is on shelf C3.",
-             {"type": "choice", "instructions": "Which shelf holds Parcel A?",
-              "criteria": {"a": "B2", "b": "C3"}})
+model = tevro.load()  # downloads kartikg1/tevro-decider
+
+state = "Order 1182 arrived with a cracked screen."
+questions = {
+    "damaged": {"type": "noul", "instructions": "Was the item damaged on arrival?"},
+    "next": {"type": "choice", "instructions": "What should support do?",
+             "criteria": {"a": "Send a replacement", "b": "Refund the order"}},
+    "severity": {"type": "score", "instructions": "How severe is the problem?",
+                 "criteria": ["Cosmetic only", "Minor", "Blocks use", "Unsafe"]},
+}
+print(model.decide(state, questions))
 ```
 
-The pip package only runs the model. Training code, data tools and evaluation scripts live in this repository.
+`model.answer(state, question)` takes one question and also returns a `confidence`. A low confidence means the model is unsure; send those cases to a person.
 
-**Multiple choice**
+| type | criteria | answer |
+|---|---|---|
+| `choice` | `{key: description}` | `choice`: the most likely key, and `probabilities` per key |
+| `noul` | not needed | `noul`: P(yes) |
+| `score` | a list of level descriptions, lowest first | `score`: the expected level, and `probabilities` per level |
 
-```json
-{"state": "Parcel A is on shelf B2. Parcel B is on shelf C3.",
- "question": {"type": "choice", "instructions": "Which shelf holds Parcel A?",
-              "criteria": {"a": "B2", "b": "C3"}}}
+Use short neutral keys (`a`, `b`, `c`) and put the meaning in the description: the model reads keys as part of each option, so a key that repeats a word from the state can pull the answer toward it.
+
+## Server
+
+```bash
+tevro serve --port 8008
+curl -s localhost:8008/v1/systemone -H 'content-type: application/json' -d '{
+  "state": "Order 1182 arrived with a cracked screen.",
+  "questions": {
+    "damaged": {"type": "noul", "instructions": "Was the item damaged on arrival?"}
+  }
+}'
 ```
-```json
-{"confidence": 0.99996, "abstain": false, "choice": "a",
- "probabilities": {"a": 0.99996, "b": 0.00004}}
+
+`POST /v1/systemone` accepts `{"state", "questions", "model"?}` and returns `{"model", "answers", "latency_ms"}`. `GET /v1/models` describes the loaded model. On a 4-core CPU one question takes about 0.25 s once the model is loaded. The server has no authentication and binds to `127.0.0.1` by default.
+
+## Command line
+
+```bash
+tevro predict request.json
 ```
 
-**Yes/no**
+`request.json` holds one question:
 
 ```json
 {"state": "Refunds need a receipt and a purchase within 30 days. The customer bought it 12 days ago and has no receipt.",
  "question": {"type": "noul", "instructions": "Should the refund be issued?"}}
 ```
+
 ```json
 {"confidence": 0.933, "abstain": false, "noul": 0.067}
 ```
 
-`noul` is the probability of yes.
-
-The model reads option keys as part of each option, so a key that repeats a word from the state can pull the answer toward it. Use short neutral keys (`a`, `b`, `c`) and put the meaning in the description.
-
-**Score**
-
-```json
-{"state": "The app crashes for every user when they open the payments page. No data is lost.",
- "question": {"type": "score", "instructions": "How severe is this bug?",
-              "criteria": ["Cosmetic only", "Minor, with a workaround", "A core feature is blocked", "Data loss or harm"]}}
-```
-```json
-{"confidence": 0.431, "abstain": false, "score": 1.65,
- "probabilities": [0.019, 0.431, 0.428, 0.122]}
-```
-
-`score` is the expected level (0 to 3 here). A low `confidence` like this one means the model is unsure; send those cases to a person.
-
-### Server
-
-`tevro serve` loads the model once and answers HTTP requests in JEV's `/v1/systemone` format, so apps written for that API can use Tevro locally.
-
-```bash
-pip install "tevro[serve]"
-tevro serve --port 8008 --device cpu
-curl -s localhost:8008/v1/systemone -H 'content-type: application/json' -d '{
-  "state": "Order 1182 arrived with a cracked screen.",
-  "questions": {
-    "damaged": {"type": "noul", "instructions": "Was the item damaged on arrival?"},
-    "next": {"type": "choice", "instructions": "What should support do?",
-             "criteria": {"a": "Send a replacement", "b": "Refund the order"}}
-  }
-}'
-```
-
-`POST /v1/systemone` takes `{"state", "questions", "model"?}`, where `questions` maps your own ids to questions, and returns `{"model", "answers", "latency_ms"}`. Each answer carries its `type`; score probabilities are keyed `"0"`, `"1"`, and so on. `GET /v1/models` describes the loaded model. On a 4-core CPU one question takes about 0.25 s once the model is loaded. The server has no authentication and listens on `127.0.0.1` by default.
-
-From Python, `model.decide(state, questions)` returns the same `answers`.
+Each call loads the model again (about 20 s); use the server or Python for more than one question. The pip package only runs the model. Training code, data tools and evaluation scripts live in this repository.
 
 ## Results
 

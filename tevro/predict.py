@@ -83,13 +83,14 @@ class Decider:
         return answers
 
 
-def load(model=DEFAULT_MODEL, device=None):
-    """Loads the base model, the LoRA adapter and the decision head. `model` is a Hugging Face repo id or a folder."""
+def load(model=DEFAULT_MODEL, device=None, precision="fp32"):
+    """Loads the base model, the LoRA adapter and the decision head. `model` is a Hugging Face repo id or a folder.
+    precision "bf16" halves the memory of the frozen weights (use it on small machines); "fp32" is exact."""
     folder = resolve(model)
     meta = json.loads((folder / "meta.json").read_text())
     device = torch.device(device) if device else get_device()
 
-    backbone = load_backbone(meta["model_name"], meta.get("num_layers"), meta.get("dtype", "float32"))
+    backbone = load_backbone(meta["model_name"], meta.get("num_layers"), {"fp32": "float32", "bf16": "bfloat16"}[precision])
     if (folder / "lora").exists():
         backbone = PeftModel.from_pretrained(backbone, folder / "lora")
     head = build_head(meta["head_config"], backbone.config.hidden_size, meta["head_config"]["num_task_types"])

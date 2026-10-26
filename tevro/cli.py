@@ -15,6 +15,8 @@ def main(argv=None):
     for cmd in (p, s):
         cmd.add_argument("--model", default=None, help="Hugging Face repo id or local folder (default: kartikg1/tevro-decider)")
         cmd.add_argument("--device", default=None, help="cpu, cuda or mps (default: best available)")
+        cmd.add_argument("--precision", choices=["fp32", "bf16"], default="fp32",
+                         help="bf16 uses about half the memory; fp32 (default) is exact")
     args = parser.parse_args(argv)
 
     if args.command == "predict" and args.input != "-":
@@ -34,7 +36,7 @@ def main(argv=None):
 
     from tevro.predict import DEFAULT_MODEL, load  # imported here so --help does not load the model stack
 
-    model = load(args.model or DEFAULT_MODEL, args.device)
+    model = load(args.model or DEFAULT_MODEL, args.device, args.precision)
     if args.command == "predict":
         print(json.dumps(model.answer(request["state"], request["question"]), indent=2))
     else:
