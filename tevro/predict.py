@@ -70,6 +70,18 @@ class Decider:
             out.update(noul=probs[1])
         return out
 
+    def decide(self, state, questions):
+        """Answers several questions about one state in JEV's format: {id: question} in, {id: answer} out."""
+        answers = {}
+        for qid, question in questions.items():
+            if question.get("type") not in TASK_TYPES:
+                raise ValueError(f"{qid}: unknown type {question.get('type')!r}")
+            out = self.answer(state, question)
+            if question["type"] == "score":
+                out["probabilities"] = {str(i): p for i, p in enumerate(out["probabilities"])}
+            answers[qid] = {"type": question["type"], **out}
+        return answers
+
 
 def load(model=DEFAULT_MODEL, device=None):
     """Loads the base model, the LoRA adapter and the decision head. `model` is a Hugging Face repo id or a folder."""

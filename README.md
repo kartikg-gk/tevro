@@ -64,6 +64,27 @@ The pip package only runs the model. Training code, data tools and evaluation sc
 
 `score` is the expected level (0 to 3 here). A low `confidence` like this one means the model is unsure; send those cases to a person.
 
+### Server
+
+`tevro serve` loads the model once and answers HTTP requests in JEV's `/v1/systemone` format, so apps written for that API can use Tevro locally.
+
+```bash
+pip install "tevro[serve]"
+tevro serve --port 8008 --device cpu
+curl -s localhost:8008/v1/systemone -H 'content-type: application/json' -d '{
+  "state": "Order 1182 arrived with a cracked screen.",
+  "questions": {
+    "damaged": {"type": "noul", "instructions": "Was the item damaged on arrival?"},
+    "next": {"type": "choice", "instructions": "What should support do?",
+             "criteria": {"replace": "Send a replacement", "refund": "Refund the order"}}
+  }
+}'
+```
+
+`POST /v1/systemone` takes `{"state", "questions", "model"?}`, where `questions` maps your own ids to questions, and returns `{"model", "answers", "latency_ms"}`. Each answer carries its `type`; score probabilities are keyed `"0"`, `"1"`, and so on. `GET /v1/models` describes the loaded model. On a 4-core CPU one question takes about 0.25 s once the model is loaded. The server has no authentication and listens on `127.0.0.1` by default.
+
+From Python, `model.decide(state, questions)` returns the same `answers`.
+
 ## Results
 
 | Evaluation | Accuracy |
@@ -155,7 +176,7 @@ Options cannot attend to each other, so reordering them only reorders the probab
 ## Repository layout
 
 ```
-tevro/              the pip package: copies of network.py and tokenization.py, plus predict.py and cli.py
+tevro/              the pip package: copies of network.py and tokenization.py, plus predict.py, serve.py and cli.py
 tokenization.py     input layout: positions, attention mask, read indices
 network.py          base model, LoRA, decision head
 dataset.py          loading, question expansion, batching

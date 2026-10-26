@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tevro"
-version = "0.1.0"
+version = "0.1.1"
 description = "A small decision model: picks one option and gives a probability for every option, in one forward pass"
 readme = "README.md"
 license = "MIT"
@@ -24,6 +24,9 @@ dependencies = [
     "transformers>=5.17.0",
 ]
 
+[project.optional-dependencies]
+serve = ["fastapi>=0.110", "uvicorn>=0.29"]
+
 [project.urls]
 Homepage = "https://github.com/kartikg-gk/tevro"
 Model = "https://huggingface.co/kartikg1/tevro-decider"
@@ -41,6 +44,9 @@ include = ["tevro", "README.md", "LICENSE", "pyproject.toml"]
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "uvicorn>=0.29",
 ]
 train = [
     "datasets>=5.0.1",

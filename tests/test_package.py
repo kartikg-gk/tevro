@@ -74,10 +74,49 @@ def test_yes_no_score_and_structured_state():
 
 
 def test_lazy_exports_and_cli_help(capsys):
-    assert tevro.__version__ == "0.1.0" and callable(tevro.load) and tevro.DEFAULT_MODEL == "kartikg1/tevro-decider"
+    assert tevro.__version__ == "0.1.1" and callable(tevro.load) and tevro.DEFAULT_MODEL == "kartikg1/tevro-decider"
     with pytest.raises(AttributeError):
         tevro.nope
     from tevro.cli import main
     with pytest.raises(SystemExit) as e:
         main(["--help"])
     assert e.value.code == 0 and "predict" in capsys.readouterr().out
+
+
+def test_decide_uses_jev_answer_format():
+    model = make_decider()
+    answers = model.decide("It crashed twice.", {
+        "urgent": {"type": "noul", "instructions": "Urgent?"},
+        "team": {"type": "choice", "instructions": "Which team?", "criteria": {"billing": "", "tech": "bugs"}},
+        "sev": {"type": "score", "instructions": "Severity?", "criteria": ["low", "mid", "high"]}})
+    assert answers["urgent"]["type"] == "noul" and 0 <= answers["urgent"]["noul"] <= 1
+    assert answers["team"]["choice"] in ("billing", "tech")
+    assert set(answers["sev"]["probabilities"]) == {"0", "1", "2"}
+    with pytest.raises(ValueError):
+        model.decide("x", {"q": {"type": "bad", "instructions": "?"}})
+
+
+def test_server():
+    from fastapi.testclient import TestClient
+
+    from tevro.serve import create_app
+
+    model = make_decider()
+    client = TestClient(create_app(model))
+    assert client.get("/v1/models").json()["models"][0]["name"] == "tevro-decider"
+    body = {"state": {"message": "Refund the duplicate charge today."},
+            "questions": {"urgent": {"type": "noul", "instructions": "Is there time pressure?"}}}
+    r = client.post("/v1/systemone", json=body)
+    assert r.status_code == 200 and r.headers["x-request-id"]
+    out = r.json()
+    assert out["model"] == "tevro-decider" and "latency_ms" in out
+    assert out["answers"]["urgent"]["noul"] == pytest.approx(model.decide(body["state"], body["questions"])["urgent"]["noul"], abs=1e-6)
+    assert client.post("/v1/systemone", json={"state": "x", "questions": {"q": {"type": "bad"}}}).status_code == 400
+    assert client.post("/v1/systemone", json={"state": "x", "questions": {}}).status_code == 400
+
+
+def test_predict_missing_file_gives_short_error():
+    from tevro.cli import main
+    with pytest.raises(SystemExit) as e:
+        main(["predict", "no_such_request.json"])
+    assert "no such file" in str(e.value.code)
