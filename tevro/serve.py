@@ -12,6 +12,8 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
+from tevro import __version__
+
 MODEL_NAME = "tevro-decider"
 
 
@@ -28,6 +30,7 @@ def create_app(decider, source=MODEL_NAME):
     @app.get("/v1/models")
     def models():
         return {"models": [{"name": MODEL_NAME, "source": str(source), "device": str(decider.device),
+                            "version": __version__, "precision": decider.precision,
                             "max_state_tokens": decider.meta["max_state_tokens"]}]}
 
     @app.post("/v1/systemone")

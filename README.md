@@ -15,7 +15,7 @@ pip install tevro            # library
 pip install "tevro[serve]"   # + local /v1/systemone server
 ```
 
-The weights are downloaded from the Hugging Face Hub on first use. Loading needs about 2 GB of free memory. Add `--precision fp32` (or `precision="fp32"` in Python) for exact results and faster CPU inference; it needs about 3.5 GB.
+The weights are downloaded from the Hugging Face Hub on first use. Loading needs about 3 GB of free memory. On a GPU or Apple Silicon inference runs under bf16 autocast by default; add `--precision fp32` (or `precision="fp32"` in Python) for exact results. The CPU always runs fp32.
 
 ## Python
 
@@ -57,7 +57,7 @@ curl -s localhost:8008/v1/systemone -H 'content-type: application/json' -d '{
 }'
 ```
 
-`POST /v1/systemone` accepts `{"state", "questions", "model"?}` and returns `{"model", "answers", "latency_ms"}`. `GET /v1/models` describes the loaded model. On a 4-core CPU one question takes about 1 s once the model is loaded (0.3 s with `--precision fp32`). The server has no authentication and binds to `127.0.0.1` by default.
+`POST /v1/systemone` accepts `{"state", "questions", "model"?}` and returns `{"model", "answers", "latency_ms"}`. `GET /v1/models` describes the loaded model. On a 4-core CPU one question takes about 0.3 s once the model is loaded. The server has no authentication and binds to `127.0.0.1` by default.
 
 ## Command line
 

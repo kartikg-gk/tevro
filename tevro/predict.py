@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import torch
+import transformers
 from huggingface_hub import snapshot_download
 from peft import PeftModel
 from safetensors.torch import load_file
@@ -30,37 +31,51 @@ def resolve(model):
 
 
 class Decider:
-    """A loaded model. `answer(state, question)` returns the chosen option and a probability for every option."""
+    """A loaded model. `decide(state, questions)` answers several questions; `answer(state, question)` answers one
+    and also returns a confidence."""
 
-    def __init__(self, network, meta, device):
+    def __init__(self, network, meta, device, precision="fp32"):
         self.network = network.to(device).eval()
         self.meta = meta
         self.device = torch.device(device)
+        self.precision = precision
 
     @torch.no_grad()
+    def probabilities(self, state, questions):
+        """One probability list per question, all questions in one batch."""
+        if not isinstance(state, str):
+            state = json.dumps(state, ensure_ascii=False)
+        examples = []
+        for question in questions:
+            if question.get("type") not in TASK_TYPES:
+                raise ValueError(f"unknown type {question.get('type')!r}")
+            choices, _ = question_to_choices(question)
+            example = encode_example(state, question["instructions"], choices, question["type"],
+                                     self.meta["max_state_tokens"], self.meta["max_choice_tokens"],
+                                     self.meta.get("use_answer_prompt", True))
+            example.update(task_type=TASK_TYPES[question["type"]], label=None)
+            examples.append(example)
+        batch = {k: v.to(self.device) for k, v in collate_fn(examples).items()}
+
+        # bf16 autocast on GPU / Apple Silicon (as in training); the CPU always runs fp32
+        use_bf16 = self.precision == "bf16" and self.device.type in ("cuda", "mps")
+        autocast = torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=use_bf16)
+        with autocast:
+            logits = self.network(**batch).float().cpu()
+        calibration = self.meta.get("calibration") or {}
+        out = []
+        for row, question, example in zip(logits, questions, examples):
+            row = row[:len(example["choice_read_idx"])] / calibration.get("temperatures", {}).get(question["type"], 1.0)
+            out.append(torch.softmax(row, -1).tolist())
+        return out
+
     def answer(self, state, question):
         """state: text or any JSON-able object. question: {"type": "choice"|"noul"|"score", "instructions": ...,
         "criteria": {key: description} for choice, a list of ordered levels for score, optional for noul}."""
-        if not isinstance(state, str):
-            state = json.dumps(state, ensure_ascii=False)
-        choices, _ = question_to_choices(question)
-        example = encode_example(state, question["instructions"], choices, question["type"],
-                                 self.meta["max_state_tokens"], self.meta["max_choice_tokens"],
-                                 self.meta.get("use_answer_prompt", True))
-        example.update(task_type=TASK_TYPES[question["type"]], label=None)
-        batch = {k: v.to(self.device) for k, v in collate_fn([example]).items()}
-
-        autocast = torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.device.type in ("cuda", "mps"))
-        with autocast:
-            logits = self.network(**batch)[0].float().cpu()
-        calibration = self.meta.get("calibration") or {}
-        logits = logits / calibration.get("temperatures", {}).get(question["type"], 1.0)
-        probs = torch.softmax(logits, -1)
-        confidence = probs.max().item()
-        threshold = calibration.get("thresholds", {}).get(question["type"], 0.0)
+        probs = self.probabilities(state, [question])[0]
+        confidence = max(probs)
+        threshold = ((self.meta.get("calibration") or {}).get("thresholds") or {}).get(question["type"], 0.0)
         out = {"confidence": confidence, "abstain": confidence < threshold}
-        probs = probs.tolist()
-
         if question["type"] == "choice":
             keys = list(question["criteria"])
             out.update(choice=keys[max(range(len(keys)), key=probs.__getitem__)], probabilities=dict(zip(keys, probs)))
@@ -70,29 +85,41 @@ class Decider:
             out.update(noul=probs[1])
         return out
 
-    def decide(self, state, questions):
+    def decide(self, state, questions, batch_size=16):
         """Answers several questions about one state in JEV's format: {id: question} in, {id: answer} out."""
+        ids = list(questions)
         answers = {}
-        for qid, question in questions.items():
-            if question.get("type") not in TASK_TYPES:
-                raise ValueError(f"{qid}: unknown type {question.get('type')!r}")
-            out = self.answer(state, question)
-            if question["type"] == "score":
-                out["probabilities"] = {str(i): p for i, p in enumerate(out["probabilities"])}
-            answers[qid] = {"type": question["type"], **out}
+        for start in range(0, len(ids), batch_size):
+            chunk = ids[start:start + batch_size]
+            for qid, p in zip(chunk, self.probabilities(state, [questions[q] for q in chunk])):
+                kind = questions[qid]["type"]
+                if kind == "noul":
+                    answers[qid] = {"type": "noul", "noul": p[1]}
+                elif kind == "choice":
+                    keys = list(questions[qid]["criteria"])
+                    best = max(range(len(p)), key=p.__getitem__)
+                    answers[qid] = {"type": "choice", "choice": keys[best], "probabilities": dict(zip(keys, p))}
+                else:
+                    answers[qid] = {"type": "score", "score": sum(i * x for i, x in enumerate(p)),
+                                    "probabilities": {str(i): x for i, x in enumerate(p)}}
         return answers
 
 
 def load(model=DEFAULT_MODEL, device=None, precision="bf16"):
     """Loads the base model, the LoRA adapter and the decision head. `model` is a Hugging Face repo id or a folder.
-    precision "bf16" (default) halves the memory of the frozen weights; "fp32" is exact."""
+    precision "bf16" (default) runs under bf16 autocast on CUDA / Apple Silicon, which is faster but adds rounding noise
+    of about 0.001; "fp32" is exact. Weights stay fp32 and the CPU always runs fp32."""
+    if precision not in ("bf16", "fp32"):
+        raise ValueError(f"precision must be 'bf16' or 'fp32', not {precision!r}")
+    transformers.logging.set_verbosity_error()  # hides the load report for the unused upper layers
     folder = resolve(model)
     meta = json.loads((folder / "meta.json").read_text())
     device = torch.device(device) if device else get_device()
 
-    backbone = load_backbone(meta["model_name"], meta.get("num_layers"), {"fp32": "float32", "bf16": "bfloat16"}[precision])
+    backbone = load_backbone(meta["model_name"], meta.get("num_layers"), "float32")
     if (folder / "lora").exists():
-        backbone = PeftModel.from_pretrained(backbone, folder / "lora")
+        # Merged into the base weights: same result, no adapter overhead per forward pass
+        backbone = PeftModel.from_pretrained(backbone, folder / "lora").merge_and_unload()
     head = build_head(meta["head_config"], backbone.config.hidden_size, meta["head_config"]["num_task_types"])
     head.load_state_dict(load_file(str(folder / "head.safetensors"), device="cpu"))
-    return Decider(TevroNetwork(backbone, head), meta, device)
+    return Decider(TevroNetwork(backbone, head), meta, device, precision)

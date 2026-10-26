@@ -19,7 +19,7 @@ def main(argv=None):
         cmd.add_argument("--model", default=None, help="Hugging Face repo id or local folder (default: kartikg1/tevro-decider)")
         cmd.add_argument("--device", default=None, help="cpu, cuda or mps (default: best available)")
         cmd.add_argument("--precision", choices=["bf16", "fp32"], default="bf16",
-                         help="bf16 (default) uses about half the memory; fp32 is exact")
+                         help="bf16 (default) is faster on GPU / Apple Silicon; fp32 is exact. The CPU always runs fp32")
     args = parser.parse_args(argv)
 
     if args.command in ("predict", "decide"):

@@ -74,7 +74,7 @@ def test_yes_no_score_and_structured_state():
 
 
 def test_lazy_exports_and_cli_help(capsys):
-    assert tevro.__version__ == "0.1.3" and callable(tevro.load) and tevro.DEFAULT_MODEL == "kartikg1/tevro-decider"
+    assert tevro.__version__ == "0.1.4" and callable(tevro.load) and tevro.DEFAULT_MODEL == "kartikg1/tevro-decider"
     with pytest.raises(AttributeError):
         tevro.nope
     from tevro.cli import main
@@ -120,3 +120,17 @@ def test_predict_missing_file_gives_short_error():
     with pytest.raises(SystemExit) as e:
         main(["predict", "no_such_request.json"])
     assert "no such file" in str(e.value.code)
+
+
+def test_batched_decide_matches_single_answers():
+    model = make_decider()
+    questions = {"a": {"type": "noul", "instructions": "Urgent?"},
+                 "b": {"type": "choice", "instructions": "Which team handles a long billing dispute?",
+                       "criteria": {"x": "billing and payments", "y": "", "z": "technical support"}},
+                 "c": {"type": "score", "instructions": "Severity?", "criteria": ["low", "high"]}}
+    batched = model.decide("It crashed twice.", questions)
+    assert set(batched["a"]) == {"type", "noul"}
+    assert batched["a"]["noul"] == pytest.approx(model.answer("It crashed twice.", questions["a"])["noul"], abs=1e-5)
+    single = model.answer("It crashed twice.", questions["b"])["probabilities"]
+    for k, p in single.items():
+        assert batched["b"]["probabilities"][k] == pytest.approx(p, abs=1e-5)
