@@ -100,6 +100,7 @@ uv run python train.py configs/release_12k.yaml
 | `smoke.yaml` | Overfits 10 questions; train accuracy should reach 1.0 | any GPU |
 | `check_20k.yaml` | 20,000 questions, 1,000 test, bf16 weights, micro-batch 2 × 32 | 6 GB laptop GPU, ~45 min |
 | `release_12k.yaml` | The released model: 12,000 updates of 64 questions, fp32 | A100 80 GB, ~6.5 h |
+| `finetune_rules.yaml`, `finetune_v2.yaml` | Short fine-tunes of the released model on a 20K rule-reasoning mix (`--resume` the release checkpoint); ~10 min | A100 80 GB |
 
 Each run writes `runs/<name>-<timestamp>/` with the config, `metrics.jsonl`, `summary.json` and checkpoints (`best`, `latest`, `final`; LoRA adapter and head only). Every training log line shows `eta_min`, the projected minutes left. `--resume <run or checkpoint>` reloads the weights and starts a fresh optimizer.
 
@@ -165,6 +166,9 @@ jevbench_eval.py    JevBench public evaluation
 audit.py            data shortcut checks
 synthetic.py        procedural decision questions
 data_variants.py    paired question variations
+reasoning_data.py   procedural rule-reasoning questions (policies, payouts, counting)
+build_mix.py        builds a 20K fine-tuning mix from generated, public and replayed questions
+llm_items.py        writes hard items with an LLM through OpenRouter and keeps those a blind second pass agrees with (needs `pydantic` and `OPENROUTER_API_KEY`)
 modal_app.py        Modal training and evaluation
 configs/            run settings
 tests/              layout, invariance, loss and data tests
