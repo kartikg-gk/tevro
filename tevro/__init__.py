@@ -1,6 +1,6 @@
 """Tevro: a small decision model. Give it a state, a question and options; it returns a probability per option."""
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = ["DEFAULT_MODEL", "Decider", "load"]
 
 

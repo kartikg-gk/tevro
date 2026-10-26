@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tevro"
-version = "0.1.2"
+version = "0.1.3"
 description = "A small decision model: picks one option and gives a probability for every option, in one forward pass"
 readme = "README.md"
 license = "MIT"
