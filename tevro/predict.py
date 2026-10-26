@@ -83,9 +83,9 @@ class Decider:
         return answers
 
 
-def load(model=DEFAULT_MODEL, device=None, precision="fp32"):
+def load(model=DEFAULT_MODEL, device=None, precision="bf16"):
     """Loads the base model, the LoRA adapter and the decision head. `model` is a Hugging Face repo id or a folder.
-    precision "bf16" halves the memory of the frozen weights (use it on small machines); "fp32" is exact."""
+    precision "bf16" (default) halves the memory of the frozen weights; "fp32" is exact."""
     folder = resolve(model)
     meta = json.loads((folder / "meta.json").read_text())
     device = torch.device(device) if device else get_device()

@@ -15,7 +15,7 @@ pip install tevro            # library
 pip install "tevro[serve]"   # + local /v1/systemone server
 ```
 
-The weights are downloaded from the Hugging Face Hub on first use. Loading needs about 3 GB of free memory; on a small machine add `--precision bf16` (or `precision="bf16"` in Python), which needs about half of that, runs slower on CPU and moves probabilities by under 0.01.
+The weights are downloaded from the Hugging Face Hub on first use. Loading needs about 2 GB of free memory. Add `--precision fp32` (or `precision="fp32"` in Python) for exact results and faster CPU inference; it needs about 3.5 GB.
 
 ## Python
 
@@ -57,12 +57,13 @@ curl -s localhost:8008/v1/systemone -H 'content-type: application/json' -d '{
 }'
 ```
 
-`POST /v1/systemone` accepts `{"state", "questions", "model"?}` and returns `{"model", "answers", "latency_ms"}`. `GET /v1/models` describes the loaded model. On a 4-core CPU one question takes about 0.25 s once the model is loaded. The server has no authentication and binds to `127.0.0.1` by default.
+`POST /v1/systemone` accepts `{"state", "questions", "model"?}` and returns `{"model", "answers", "latency_ms"}`. `GET /v1/models` describes the loaded model. On a 4-core CPU one question takes about 1 s once the model is loaded (0.3 s with `--precision fp32`). The server has no authentication and binds to `127.0.0.1` by default.
 
 ## Command line
 
 ```bash
-tevro predict request.json
+echo '{"state": "...", "questions": {...}}' | tevro decide
+tevro predict request.json   # one question
 ```
 
 `request.json` holds one question:
