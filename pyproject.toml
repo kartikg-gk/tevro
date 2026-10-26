@@ -1,22 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "tevro"
 version = "0.1.0"
-description = "Bi-encoder decision model: scores choices for a state and question"
+description = "A small decision model: picks one option and gives a probability for every option, in one forward pass"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Kartik G" }]
+keywords = ["decision model", "classification", "lora", "qwen3", "calibration"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
-    "datasets>=5.0.1",
+    "huggingface_hub>=0.25.0",
     "peft>=0.21.0",
-    "pyyaml>=6.0.3",
     "safetensors>=0.6.0",
     "torch>=2.14.0",
     "transformers>=5.17.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kartikg-gk/tevro"
+Model = "https://huggingface.co/kartikg1/tevro-decider"
+
+[project.scripts]
+tevro = "tevro.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tevro"]
+
+[tool.hatch.build.targets.sdist]
+include = ["tevro", "README.md", "pyproject.toml"]
+
+# Training and data tools; not part of the published package. uv installs both groups by default.
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
 ]
+train = [
+    "datasets>=5.0.1",
+    "pyyaml>=6.0.3",
+]
+
+[tool.uv]
+default-groups = ["dev", "train"]
 
 # Windows has no CUDA torch on PyPI; take it from the PyTorch CUDA 13.0 index (Linux keeps PyPI's CUDA build)
 [tool.uv.sources]

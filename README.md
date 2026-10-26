@@ -1,22 +1,30 @@
 # Tevro
 
-Training code for Tevro, a small decision model. It reads a state, a question and a fixed set of options, and returns one probability per option in a single forward pass. It handles three question types: multiple choice, yes/no, and ordinal scores.
+Tevro is a small decision model, and this repository holds its training code and a pip package for running it. It reads a state, a question and a fixed set of options, and returns one probability per option in a single forward pass. It handles three question types: multiple choice, yes/no, and ordinal scores.
 
-![Tevro architecture](arch.png)
+![Tevro architecture](https://raw.githubusercontent.com/kartikg-gk/tevro/main/arch.png)
 
 ## Use the model
 
 The trained model is on Hugging Face: **[kartikg1/tevro-decider](https://huggingface.co/kartikg1/tevro-decider)**. It needs Python 3.12 and about 3 GB of free memory; a GPU is optional.
 
 ```bash
-pip install huggingface_hub
-hf download kartikg1/tevro-decider --local-dir tevro
-cd tevro
-pip install -r requirements.txt
-python predict.py example.json --device cpu
+pip install tevro
+tevro predict request.json --device cpu
 ```
 
-`predict.py` reads one request from a JSON file and prints the answer. The base model is downloaded on the first run. Use `--device cuda` on an NVIDIA GPU.
+`tevro predict` reads one request from a JSON file (examples below) and prints the answer. The weights and the base model are downloaded on the first run. Use `--device cuda` on an NVIDIA GPU. From Python:
+
+```python
+import tevro
+
+model = tevro.load()                      # downloads kartikg1/tevro-decider on first use
+model.answer("Parcel A is on shelf B2. Parcel B is on shelf C3.",
+             {"type": "choice", "instructions": "Which shelf holds Parcel A?",
+              "criteria": {"a": "B2", "b": "C3"}})
+```
+
+The pip package only runs the model. Training code, data tools and evaluation scripts live in this repository.
 
 **Multiple choice**
 
@@ -146,6 +154,7 @@ Options cannot attend to each other, so reordering them only reorders the probab
 ## Repository layout
 
 ```
+tevro/              the pip package: copies of network.py and tokenization.py, plus predict.py and cli.py
 tokenization.py     input layout: positions, attention mask, read indices
 network.py          base model, LoRA, decision head
 dataset.py          loading, question expansion, batching
