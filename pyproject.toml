@@ -7,8 +7,10 @@ name = "tevro"
 version = "0.1.0"
 description = "A small decision model: picks one option and gives a probability for every option, in one forward pass"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
-authors = [{ name = "Kartik G" }]
+authors = [{ name = "Kartik Gadad" }]
 keywords = ["decision model", "classification", "lora", "qwen3", "calibration"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -33,7 +35,7 @@ tevro = "tevro.cli:main"
 packages = ["tevro"]
 
 [tool.hatch.build.targets.sdist]
-include = ["tevro", "README.md", "pyproject.toml"]
+include = ["tevro", "README.md", "LICENSE", "pyproject.toml"]
 
 # Training and data tools; not part of the published package. uv installs both groups by default.
 [dependency-groups]

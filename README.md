@@ -169,3 +169,7 @@ modal_app.py        Modal training and evaluation
 configs/            run settings
 tests/              layout, invariance, loss and data tests
 ```
+
+## License
+
+MIT. The base model, Qwen3-0.6B, is released under its own license.
