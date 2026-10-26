@@ -50,6 +50,8 @@ The pip package only runs the model. Training code, data tools and evaluation sc
 
 `noul` is the probability of yes.
 
+The model reads option keys as part of each option, so a key that repeats a word from the state can pull the answer toward it. Use short neutral keys (`a`, `b`, `c`) and put the meaning in the description.
+
 **Score**
 
 ```json
@@ -76,7 +78,7 @@ curl -s localhost:8008/v1/systemone -H 'content-type: application/json' -d '{
   "questions": {
     "damaged": {"type": "noul", "instructions": "Was the item damaged on arrival?"},
     "next": {"type": "choice", "instructions": "What should support do?",
-             "criteria": {"replace": "Send a replacement", "refund": "Refund the order"}}
+             "criteria": {"a": "Send a replacement", "b": "Refund the order"}}
   }
 }'
 ```
